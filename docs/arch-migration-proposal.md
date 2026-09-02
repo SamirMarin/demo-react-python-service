@@ -24,8 +24,7 @@ flowchart TB
             NAT["NAT Gateway (fixed EIP)"]
         end
         subgraph Private["Private Subnet"]
-            API["ECS: API Service"]
-            Poller["ECS: Dispatcher Poller"]
+            Dispatcher["ECS: Dispatcher Service"]
             Job["ECS: Job Task (per-job, ephemeral)"]
             SQS[("SQS Queue")]
             Proxy["RDS Proxy"]
@@ -40,16 +39,16 @@ flowchart TB
     Browser -- static assets --> CF
     CF --> S3F
     Browser -- "API calls (CORS)" --> ALB
-    ALB --> API
-    API -- enqueue --> SQS
-    SQS --> Poller
-    Poller -- RunTask --> Job
-    API --> Proxy
+    ALB --> Dispatcher
+    Dispatcher -- enqueue --> SQS
+    SQS -- poll --> Dispatcher
+    Dispatcher -- RunTask --> Job
+    Dispatcher --> Proxy
     Job --> Proxy
     Proxy --> RDS
-    API -.-> Secrets
+    Dispatcher -.-> Secrets
     Job -.-> Secrets
-    API --> NAT
+    Dispatcher --> NAT
     NAT --> Partner
     Job --> NAT
 
@@ -96,7 +95,7 @@ That's a non-trivial platform to build and operate for two services, on top of t
 
 ## Frontend ↔ Backend Communication
 
-**Domains:** two separate domains — `app.example.com` (CloudFront → S3, the frontend) and `api.example.com` (ALB → ECS API tasks, the backend). The browser calls the API domain directly from client-side JS, with CORS configured on the backend to allow the frontend's origin. (An alternative is routing both through one CloudFront distribution with path-based rules, avoiding CORS entirely — not chosen here, it trades a small CORS config for more CloudFront origin/cache-behavior config, which isn't worth it at this scale.)
+**Domains:** two separate domains — `app.example.com` (CloudFront → S3, the frontend) and `api.example.com` (ALB → ECS dispatcher service, the backend). The browser calls the API domain directly from client-side JS, with CORS configured on the backend to allow the frontend's origin. (An alternative is routing both through one CloudFront distribution with path-based rules, avoiding CORS entirely — not chosen here, it trades a small CORS config for more CloudFront origin/cache-behavior config, which isn't worth it at this scale.)
 
 **ALB:** has to be internet-facing — the frontend runs in the end user's browser out on the public internet, so it needs a public endpoint to reach. The ECS tasks behind it still live in private subnets and are only reachable through the ALB, so "public ALB" doesn't mean the backend compute itself is exposed.
 
