@@ -45,6 +45,22 @@ directory is the root config that calls it, matching the `modules/` +
 per-environment root layout described in the proposal doc's Infrastructure as
 Code section.
 
+### Verifying it works
+
+There's no ALB in this demo (kept deliberately basic, see Assumptions and
+shortcuts below), so the running task gets a public IP directly, that's
+what you hit to check it's up. In the AWS Console: ECS → Clusters →
+`demo-app-cluster` → the `demo-app` service → Tasks tab → click the running
+task → the **Public IP** is listed under the task's network details. Grab
+that IP and:
+
+```bash
+curl http://<public-ip>
+```
+
+Should return nginx's default welcome page. Tested against a real apply,
+confirmed working.
+
 ## About the GitHub Actions workflow
 
 `.github/workflows/build-deploy.yml` shows the CI/CD pattern from the
@@ -104,8 +120,7 @@ the doc a bit more concretely.
 - Grammar and clarity passes on the architecture proposal doc, and general
   idea-bouncing/discussion while working through design decisions (ECS vs.
   Kubernetes, dispatcher design, database scalability approach, etc.) — the
-  architectural reasoning and decisions themselves are mine, arrived at
-  through that back-and-forth, not generated independently.
+  architectural reasoning and decisions themselves are mine.
 - Generated the Mermaid system diagram, from a description of the
   architecture I gave it.
 - Generated the Terraform boilerplate in `terraform/` from a description of
