@@ -109,7 +109,7 @@ That's a non-trivial platform to build and operate for two services, on top of t
 
 **Assumption:** exact internals of these tasks aren't known, but the workload appears to be expensive, variably-sized jobs (memory need roughly correlated to client size) rather than uniform request traffic this shapes the proposal below.
 
-**Proposal:** replace the single always-on backend with a lightweight API dispatcher. The dispatcher accepts a task request and enqueues it onto a queue (SQS); a small poller drains the queue and launches each job as its own isolated ECS Fargate task, sized to what that job needs.
+**Proposal:** replace the single always-on backend with a lightweight dispatcher service. It accepts a task request and enqueues it onto a queue (SQS), then drains that queue itself and launches each job as its own isolated ECS Fargate task, sized to what that job needs.
 
 **Why per-task isolation instead of a single scaled backend:**
 
@@ -179,8 +179,7 @@ AWS recommends one NAT Gateway per AZ for high availability, but depending on co
 
 **IAM: scoping task roles to least privilege.** Each ECS task definition gets its own dedicated task role rather than one shared role reused across services. Some concrete examples:
 
-* **API service task role:** `sqs:SendMessage` on the dispatch queue only, `secretsmanager:GetSecretValue` on its specific secret ARN. No direct database credentials, no ECS permissions.
-* **Dispatcher poller task role:** `sqs:ReceiveMessage`/`DeleteMessage` on the dispatch queue, `ecs:RunTask` scoped to the specific job task definition family, and `iam:PassRole` scoped to just that job task's role (required by AWS to launch a task with a role attached). Nothing broader than that.
+* **Dispatcher service task role:** `sqs:SendMessage`/`ReceiveMessage`/`DeleteMessage` on the dispatch queue, `secretsmanager:GetSecretValue` on its specific secret ARN, `ecs:RunTask` scoped to the specific job task definition family, and `iam:PassRole` scoped to just that job task's role (required by AWS to launch a task with a role attached). No direct database credentials.
 * **Job task role:** read access to whatever S3 prefix it needs, `secretsmanager:GetSecretValue` for the database secret. No SQS or ECS permissions at all, since a job task never needs to touch the queue or launch other tasks.
 
 This keeps a compromised or misconfigured task limited to exactly what that task does, instead of one broad role giving every service access to everything.
@@ -202,7 +201,7 @@ This keeps a compromised or misconfigured task limited to exactly what that task
 * Tests are not re-run — `main` only accepts changes via PR, and those already passed CI. *(Known trade-off: this skips catching the case where two independently-passing PRs combine badly once merged. Acceptable at today's team size/merge frequency; worth revisiting if either grows.)*
 * Build and push the image, tagged with the commit SHA so every push maps to a traceable, immutable image.
 * GitHub Packages (GHCR) is used as the registry — no separate registry to stand up or pay for at this scale.
-* A deploy step updates the long-running ECS API service to the new image and waits for the deployment to report healthy before considering it done.
+* A deploy step updates the long-running ECS dispatcher service to the new image and waits for the deployment to report healthy before considering it done.
 * Dispatcher-launched tasks (see Backend: Task Dispatcher) aren't a long-running service, so there's nothing to "update" directly — the deploy step refreshes the task definition they launch from, so the next dispatched task picks up the new image.
 * The frontend follows a separate deploy step, not an ECS rolling deploy: build → sync to S3 → CloudFront invalidation (see Frontend Hosting above).
 
@@ -259,7 +258,7 @@ After this step the system is functionally unchanged — same behavior, same dat
 With the platform in place, build the actual fixes for the load-spike problem:
 
 * Application change: batch/bulk writes instead of row-by-row.
-* New infra: the SQS queue + poller for the task dispatcher (see Backend: Task Dispatcher), and RDS Proxy in front of the database to absorb the additional concurrent connections from tasks launching independently.
+* New infra: the SQS queue for the dispatcher service (see Backend: Task Dispatcher), and RDS Proxy in front of the database to absorb the additional concurrent connections from tasks launching independently.
 * RDS Proxy's credentials go through Secrets Manager rather than being embedded in task definitions or environment variables — a natural point to introduce Secrets Manager more broadly for the app's other credentials too.
 
 Build and validate this in a dev environment first: functional testing, then load testing that specifically simulates the concurrent-task/connection-burst pattern this is meant to solve.
